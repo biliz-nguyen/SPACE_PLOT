@@ -1,5 +1,6 @@
 import { validateFiles, CAD, extension, validateMetadata } from "./policy.js";
-import { parseModel, releaseObject } from "./importer.js";
+import { parseModel, releaseObject, rebuildAssetGLB } from "./importer.js";
+import { analyzeModelGeometry, decimateModel } from "./optimizer.js";
 import { allAssets, saveAsset, getAsset } from "./db.js";
 import { generateUUID } from "./crypto.js";
 import { AssetPreview } from "./preview.js";
@@ -49,8 +50,8 @@ export function setupStudio({ store, catalog, model, toast }) {
  <label class="drop-zone" id="file-drop"><span class="upload-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span><strong>Thả model và file đi kèm vào đây</strong><span>hoặc bấm để chọn nhiều file</span><small>GLB · glTF · OBJ + MTL · STL · PLY<br>STEP / STP · IGES / IGS · BREP</small><input id="asset-files" type="file" multiple accept=".glb,.gltf,.bin,.obj,.mtl,.stl,.ply,.step,.stp,.iges,.igs,.brep,.png,.jpg,.jpeg,.webp" /></label>
  <div class="import-settings"><label>Đơn vị nguồn <select id="source-unit"><option value="mm">Millimeter · mm</option><option value="cm">Centimeter · cm</option><option value="m">Meter · m</option><option value="in">Inch · in</option></select></label><label>Trục đứng nguồn <select id="source-up"><option value="z">Z-up · CAD</option><option value="y">Y-up</option></select></label></div>
  <p class="micro">GLB/glTF luôn đọc m + Y-up theo chuẩn. STEP/IGES tự chuyển về mm. Chọn đơn vị cho OBJ/STL/PLY/BREP. Không co model để ép vừa linh kiện.</p><div id="file-summary" class="file-summary">Chưa chọn file · tối đa 40 MiB / 32 file</div>
- <button id="process-files" class="btn primary full" disabled>Process & inspect →</button><div id="import-log" class="import-log" role="status" aria-live="polite"></div>
- </div><div class="preview-column"><div class="preview-box" id="asset-preview"><div class="preview-placeholder" id="preview-placeholder">MODEL PREVIEW<br><small>Geometry first. No guesswork.</small></div></div><div id="staged-list"></div><label class="check review-check"><input type="checkbox" id="confirm-import" /> Tôi đã kiểm tra đơn vị, trục và kích thước hiển thị.</label><button id="save-import" class="btn primary full" disabled>Save to my hangar</button></div></div></section>
+ <button id="process-files" class="btn primary full" disabled>Process & inspect →</button><div id="import-log" class="import-log" role="status" aria-live="polite"></div><div id="preflight-analysis" class="preflight-panel" hidden></div>
+ </div><div class="preview-column"><div class="preview-box" id="asset-preview"><div class="preview-placeholder" id="preview-placeholder">MODEL PREVIEW<br><small>Geometry first. No guesswork.</small></div></div><div id="decimation-toolbar" class="decimation-panel" hidden></div><div id="staged-list"></div><label class="check review-check"><input type="checkbox" id="confirm-import" /> Tôi đã kiểm tra đơn vị, trục và kích thước hiển thị.</label><button id="save-import" class="btn primary full" disabled>Save to my hangar</button></div></div></section>
  <section id="tab-local" class="studio-tab" hidden><div class="tab-intro"><div><div class="eyebrow">YOUR PRIVATE COLLECTION</div><h3>My hangar</h3><p class="muted">Lưu trên trình duyệt này. Kéo vào scene hoặc bấm Add. Export GLB để có bản sao.</p></div><button class="btn secondary" data-tab="import">+ Import model</button></div><div id="local-assets"></div><div id="contribute-form"></div></section>
  <section id="tab-ai" class="studio-tab" hidden><div class="studio-columns"><div><div class="eyebrow">GENERATIVE WORKSHOP</div><h3>Give an idea its shape.</h3><p class="muted">Meshy Text-to-3D tạo mesh trực quan. CAD có sẵn được tessellate trực tiếp để giữ hình học; AI không thay thế thông số kỹ thuật.</p><label>Provider<select disabled><option>Meshy · Text to 3D preview</option></select></label><label>Mô tả model<textarea id="ai-prompt" maxlength="600" rows="5" placeholder="A compact quadcopter GPS module, separate component, neutral material, no text…"></textarea></label><label>Cạnh dài nhất ước lượng (mm)<input id="ai-size" type="number" value="50" min="0.01" max="10000" /></label><label class="check review-check"><input id="ai-consent" type="checkbox" /> Tạo task dùng credit của provider, tối đa 3 lượt/ngày.</label><button class="btn primary full" id="ai-generate">Generate preview →</button><p class="micro">API key chỉ nằm trên server. Cần đăng nhập. Provider khác có thể bổ sung bằng adapter; hiện chỉ Meshy được tích hợp.</p><div id="ai-status" role="status" class="import-log">Chưa tạo task.</div><button class="btn secondary full" id="ai-resume" hidden>Kiểm tra task gần nhất</button><button class="btn primary full" id="ai-download" hidden>Import generated GLB for review</button></div><div class="ai-explainer"><div class="orbit-mark">◌</div><span class="eyebrow">VISUAL EXPLORATION</span><h3>Imagine. Generate.<br>Inspect. Assemble.</h3><p>Model AI được gắn nhãn <strong>AI VISUAL</strong>. Kích thước đặt thủ công và các thông số chưa có nguồn xác thực sẽ luôn được đánh dấu chưa xác minh.</p><div class="workflow-mini"><span>Prompt</span><span>Meshy task</span><span>GLB validation</span><span>My hangar</span></div></div></div></section>
  <section id="tab-community" class="studio-tab" hidden><div class="tab-intro"><div><div class="eyebrow">BUILT TO SHARE / CURATED BY OWNER</div><h3>Community vault</h3><p class="muted">Chỉ GLB đã được chủ kho duyệt mới xuất hiện công khai. Duyệt model không có nghĩa là xác nhận an toàn phần cứng.</p></div><button id="refresh-community" class="btn secondary">↻ Refresh</button></div><div id="cloud-auth"></div><div class="request-box"><input id="request-title" maxlength="100" placeholder="Tên linh kiện bạn muốn có…" aria-label="Tên model yêu cầu" /><input id="request-details" maxlength="4000" placeholder="Thông số, nguồn tham khảo, mục đích…" aria-label="Chi tiết yêu cầu model" /><button id="send-request" class="btn secondary">Request a model</button></div><div id="community-assets"></div><div id="review-queue"></div><div id="model-requests"></div></section>
@@ -108,7 +109,8 @@ export function setupStudio({ store, catalog, model, toast }) {
       files = next;
       $("#file-summary").textContent = files.map((f) => f.name).join(" · ");
       $("#process-files").disabled = false;
-      status("FILES SELECTED · READY TO PROCESS");
+      status("FILES SELECTED · ANALYZING GEOMETRY...");
+      processFiles();
     } catch (e) {
       status(e.message);
     }
@@ -125,9 +127,258 @@ export function setupStudio({ store, catalog, model, toast }) {
     zone.classList.remove("drag-over");
     choose(e.dataTransfer.files);
   };
+  function renderPreflight(analysis) {
+    const container = $("#preflight-analysis");
+    if (!container) return;
+    if (!analysis) {
+      container.innerHTML = "";
+      container.hidden = true;
+      return;
+    }
+    container.hidden = false;
+
+    const healthColors = {
+      optimal: "#00ff88",
+      moderate: "#38bdf8",
+      heavy: "#f59e0b",
+      critical: "#ef4444",
+      warning: "#f59e0b",
+      corrupt: "#ef4444",
+    };
+    const color = healthColors[analysis.health.level] || "#00ff88";
+
+    const issuesList =
+      analysis.health.issues && analysis.health.issues.length
+        ? `<ul class="health-issues">${analysis.health.issues
+            .map((iss) => `<li>⚠ ${esc(iss)}</li>`)
+            .join("")}</ul>`
+        : "";
+
+    container.innerHTML = `
+      <div class="preflight-card">
+        <div class="preflight-top">
+          <div class="preflight-badge">
+            <span class="live-dot" style="background:${color};box-shadow:0 0 8px ${color}"></span>
+            <strong>PRE-FLIGHT TELEMETRY</strong>
+            <small>// AUTO-DIAGNOSTICS</small>
+          </div>
+          <span class="health-pill ${analysis.health.level}" style="border-color:${color};color:${color}">
+            ${esc(analysis.health.label)}
+          </span>
+        </div>
+
+        <div class="telemetry-grid">
+          <div class="telemetry-cell">
+            <span class="t-label">ĐỊNH DẠNG / FILE</span>
+            <strong class="t-value">${esc(analysis.format)}</strong>
+            <span class="t-sub">${bytes(analysis.fileSizeBytes)}</span>
+          </div>
+          <div class="telemetry-cell">
+            <span class="t-label">BOUNDING BOX (X × Y × Z)</span>
+            <strong class="t-value mono">${analysis.dimensionsMm.join(" × ")} <small>mm</small></strong>
+            <span class="t-sub">Cạnh dài nhất: ${analysis.maxDimMm} mm</span>
+          </div>
+          <div class="telemetry-cell">
+            <span class="t-label">SỐ MESH (SUB-MESHES)</span>
+            <strong class="t-value">${analysis.meshCount.toLocaleString()} <small>parts</small></strong>
+            <span class="t-sub">${analysis.meshCount > 1 ? "Đa linh kiện lắp ráp" : "Khối đơn thể"}</span>
+          </div>
+          <div class="telemetry-cell">
+            <span class="t-label">TAM GIÁC / ĐỈNH</span>
+            <strong class="t-value mono ${analysis.triangleCount > 150000 ? "text-amber" : ""}">${analysis.triangleCount.toLocaleString()} <small>tris</small></strong>
+            <span class="t-sub">${analysis.vertexCount.toLocaleString()} vertices</span>
+          </div>
+        </div>
+
+        <div class="health-callout ${analysis.health.level}">
+          <div class="health-msg">
+            <span class="health-icon">${analysis.health.level === "optimal" ? "✓" : analysis.health.level === "moderate" ? "ℹ" : "⚠"}</span>
+            <div>
+              <strong>Tình trạng dữ liệu:</strong> ${esc(analysis.health.recommendation)}
+            </div>
+          </div>
+          ${issuesList}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDecimation(stage) {
+    const container = $("#decimation-toolbar");
+    if (!container) return;
+    if (!stage || !stage.asset || stage.asset.triangles < 20) {
+      container.innerHTML = "";
+      container.hidden = true;
+      return;
+    }
+    container.hidden = false;
+
+    const currentTris = stage.asset.triangles;
+    const originalTris = stage.originalAsset?.triangles || currentTris;
+    const isReduced = currentTris < originalTris;
+    const diffPct = isReduced
+      ? (((originalTris - currentTris) / originalTris) * 100).toFixed(1)
+      : 0;
+
+    container.innerHTML = `
+      <div class="decimation-card">
+        <div class="decimation-head">
+          <div class="decimation-title">
+            <span class="decimate-icon">⚡</span>
+            <div>
+              <strong>GIẢM TAM GIÁC GIỮ CẠNH SẮC (SHARP DECIMATION)</strong>
+              <small>Tăng tốc tải &amp; FPS · Tự động giữ góc cơ khí 32° toCreasedNormals</small>
+            </div>
+          </div>
+          <span class="crease-badge" title="Góc phân tách vector pháp tuyến 32 độ giữ cạnh phẳng và gờ sắc cơ khí">🛡️ CAD 32° Crease</span>
+        </div>
+
+        <div class="decimation-controls">
+          <div class="decimation-presets">
+            <button type="button" class="preset-pill" data-pct="30">-30% <small>Nhẹ</small></button>
+            <button type="button" class="preset-pill active" data-pct="50">-50% <small class="highlight">Khuyên dùng</small></button>
+            <button type="button" class="preset-pill" data-pct="75">-75% <small>Tối đa</small></button>
+          </div>
+
+          <div class="decimation-slider-wrap">
+            <div class="slider-meta">
+              <span>Tỉ lệ giảm mục tiêu:</span>
+              <strong id="decimate-val-text">50%</strong>
+            </div>
+            <input type="range" id="decimate-range" min="10" max="85" step="5" value="50" aria-label="Tỉ lệ giảm tam giác" />
+          </div>
+
+          <div class="decimation-actions">
+            <button type="button" id="btn-run-decimate" class="btn primary decimate-apply-btn">
+              ⚡ Giảm tam giác (-<span id="decimate-btn-pct">50</span>%)
+            </button>
+            <button type="button" id="btn-undo-decimate" class="btn secondary decimate-undo-btn" ${!isReduced ? "disabled" : ""}>
+              ↶ Khôi phục gốc
+            </button>
+          </div>
+
+          ${
+            isReduced
+              ? `<div class="decimation-status-row">
+              <span class="badge-success">✓ Đã tối ưu -${diffPct}%</span>
+              <span>(${originalTris.toLocaleString()} → ${currentTris.toLocaleString()} tris · ${bytes(stage.asset.bytes)})</span>
+            </div>`
+              : ""
+          }
+        </div>
+      </div>
+    `;
+
+    const range = container.querySelector("#decimate-range");
+    const valText = container.querySelector("#decimate-val-text");
+    const btnPct = container.querySelector("#decimate-btn-pct");
+    const pills = container.querySelectorAll(".preset-pill");
+
+    const setPct = (pct) => {
+      range.value = pct;
+      valText.textContent = pct + "%";
+      btnPct.textContent = pct;
+      pills.forEach((p) =>
+        p.classList.toggle("active", p.dataset.pct === "" + pct),
+      );
+    };
+
+    pills.forEach((p) => {
+      p.onclick = () => setPct(Number(p.dataset.pct));
+    });
+
+    range.oninput = () => {
+      setPct(range.value);
+    };
+
+    const btnApply = container.querySelector("#btn-run-decimate");
+    const btnUndo = container.querySelector("#btn-undo-decimate");
+
+    btnApply.onclick = async () => {
+      if (!stage || busy) return;
+      const ratio = Number(range.value) / 100;
+      btnApply.disabled = true;
+      btnApply.textContent = "Đang tối ưu & tính pháp tuyến...";
+
+      try {
+        const baseObj = stage.originalObjectClone
+          ? stage.originalObjectClone.clone(true)
+          : stage.object;
+        const result = decimateModel(baseObj, ratio, 32);
+
+        releaseObject(stage.object);
+        stage.object = baseObj;
+
+        status("REBUILDING OPTIMIZED GLB BINARY...");
+        const updatedAsset = await rebuildAssetGLB(stage.object, stage.asset);
+        stage.asset = updatedAsset;
+
+        stage.analysis = analyzeModelGeometry(
+          stage.object,
+          stage.asset.original,
+          {
+            unit: $("#source-unit").value,
+            up: $("#source-up").value,
+          },
+        );
+
+        preview.show(stage.object);
+        showStages();
+        renderPreflight(stage.analysis);
+        renderDecimation(stage);
+
+        status(
+          `DECIMATION APPLIED: -${result.reductionPercent}% (${result.beforeTris.toLocaleString()} → ${result.afterTris.toLocaleString()} tris)`,
+        );
+        toast(
+          `Đã giảm ${result.reductionPercent}% tam giác (${result.beforeTris.toLocaleString()} → ${result.afterTris.toLocaleString()} tris) · Giữ nguyên cạnh sắc cơ khí 32°.`,
+        );
+      } catch (err) {
+        status("Lỗi tối ưu: " + err.message);
+        toast("Không thể tối ưu mesh: " + err.message);
+        renderDecimation(stage);
+      }
+    };
+
+    btnUndo.onclick = async () => {
+      if (!stage || !stage.originalObjectClone || busy) return;
+      btnUndo.disabled = true;
+      btnUndo.textContent = "Đang khôi phục...";
+
+      try {
+        releaseObject(stage.object);
+        stage.object = stage.originalObjectClone.clone(true);
+        stage.asset = { ...stage.originalAsset };
+
+        stage.analysis = analyzeModelGeometry(
+          stage.object,
+          stage.asset.original,
+          {
+            unit: $("#source-unit").value,
+            up: $("#source-up").value,
+          },
+        );
+
+        preview.show(stage.object);
+        showStages();
+        renderPreflight(stage.analysis);
+        renderDecimation(stage);
+
+        status("RESTORED ORIGINAL GEOMETRY");
+        toast("Đã khôi phục mô hình gốc ban đầu.");
+      } catch (err) {
+        status("Lỗi khôi phục: " + err.message);
+      }
+    };
+  }
+
   function selectStage(index) {
     selected = staged[index];
-    if (!selected) return;
+    if (!selected) {
+      renderPreflight(null);
+      renderDecimation(null);
+      return;
+    }
     preview.show(selected.object);
     $("#preview-placeholder").hidden = true;
     dialog
@@ -135,59 +386,101 @@ export function setupStudio({ store, catalog, model, toast }) {
       .forEach((b) =>
         b.classList.toggle("active", Number(b.dataset.stage) === index),
       );
+    renderPreflight(selected.analysis);
+    renderDecimation(selected);
   }
+
   function showStages() {
     $("#staged-list").innerHTML = staged
       .map(
         (s, i) =>
-          `<button class="stage-item" data-stage="${i}"><span>◈</span><div><strong>${esc(s.asset.name)}</strong><small>${dims(s.asset)} mm · ${s.asset.triangles.toLocaleString()} triangles · ${bytes(s.asset.bytes)}</small>${s.warnings.map((w) => `<small class="amber-text">${esc(w)}</small>`).join("")}</div><span>✓</span></button>`,
+          `<button class="stage-item ${selected === s ? "active" : ""}" data-stage="${i}"><span>◈</span><div><strong>${esc(s.asset.name)}</strong><small>${dims(s.asset)} mm · ${s.asset.triangles.toLocaleString()} triangles · ${bytes(s.asset.bytes)}</small>${s.warnings.map((w) => `<small class="amber-text">${esc(w)}</small>`).join("")}</div><span>✓</span></button>`,
       )
       .join("");
     $("#confirm-import").checked = false;
     $("#save-import").disabled = true;
     progress(staged.length ? 1 : 0);
-    if (staged.length) selectStage(0);
+    if (staged.length) {
+      const idx = selected ? staged.indexOf(selected) : 0;
+      selectStage(idx >= 0 ? idx : 0);
+    } else {
+      renderPreflight(null);
+      renderDecimation(null);
+    }
   }
+
   $("#staged-list").onclick = (e) => {
     const b = e.target.closest("[data-stage]");
     if (b) selectStage(Number(b.dataset.stage));
   };
-  $("#process-files").onclick = async () => {
-    if (busy) return;
+
+  let processingPromise = null;
+
+  async function processFiles() {
+    if (busy) {
+      if (processingPromise) await processingPromise;
+      return;
+    }
+    busy = true;
     locked(true);
     preview.clear();
-    staged.forEach((s) => releaseObject(s.object));
+    staged.forEach((s) => {
+      releaseObject(s.object);
+      if (s.originalObjectClone) releaseObject(s.originalObjectClone);
+    });
     staged = [];
+    selected = null;
     $("#staged-list").replaceChildren();
     $("#confirm-import").checked = false;
     $("#save-import").disabled = true;
+    renderPreflight(null);
+    renderDecimation(null);
+
     const logs = [];
-    try {
-      const models = validateFiles(files);
-      for (const file of models) {
-        status("PROCESSING " + file.name);
-        $("#import-log").textContent = "Đang xử lý " + file.name + "…";
-        await new Promise((r) => setTimeout(r, 0));
-        try {
-          staged.push(
-            await parseModel(file, files, {
+    processingPromise = (async () => {
+      try {
+        const models = validateFiles(files);
+        for (const file of models) {
+          status("PROCESSING " + file.name);
+          $("#import-log").textContent = "Đang xử lý " + file.name + "…";
+          await new Promise((r) => setTimeout(r, 0));
+          try {
+            const parsed = await parseModel(file, files, {
               unit: $("#source-unit").value,
               up: $("#source-up").value,
-            }),
-          );
-          logs.push("✓ " + file.name);
-        } catch (e) {
-          logs.push("✕ " + file.name + ": " + e.message);
+            });
+            parsed.originalObjectClone = parsed.object.clone(true);
+            parsed.originalAsset = { ...parsed.asset };
+            staged.push(parsed);
+            logs.push("✓ " + file.name);
+          } catch (e) {
+            logs.push("✕ " + file.name + ": " + e.message);
+          }
         }
+        showStages();
+        status(`${staged.length} MODEL READY · VERIFY DIMENSIONS BEFORE SAVING`);
+      } catch (e) {
+        logs.push(e.message);
+      } finally {
+        $("#import-log").textContent = logs.join("\n");
+        locked(false);
+        busy = false;
+        processingPromise = null;
       }
-      showStages();
-      status(`${staged.length} MODEL READY · VERIFY DIMENSIONS BEFORE SAVING`);
-    } catch (e) {
-      logs.push(e.message);
-    } finally {
-      $("#import-log").textContent = logs.join("\n");
-      locked(false);
-    }
+    })();
+
+    await processingPromise;
+  }
+
+  $("#process-files").onclick = async () => {
+    await processFiles();
+  };
+
+  $("#source-unit").onchange = () => {
+    if (files.length && !busy) processFiles();
+  };
+  $("#source-up").onchange = () => {
+    if (files.length && !busy) processFiles();
   };
   $("#confirm-import").onchange = (e) =>
     ($("#save-import").disabled = !e.target.checked || !staged.length || busy);
@@ -201,6 +494,7 @@ export function setupStudio({ store, catalog, model, toast }) {
         await saveAsset(s.asset);
         store.registerAsset(s.asset);
         releaseObject(s.object);
+        if (s.originalObjectClone) releaseObject(s.originalObjectClone);
         staged = staged.filter((x) => x !== s);
       }
       preview.clear();
@@ -344,7 +638,10 @@ export function setupStudio({ store, catalog, model, toast }) {
             origin: a.provenance?.origin || "community",
           });
         preview.clear();
-        staged.forEach((s) => releaseObject(s.object));
+        staged.forEach((s) => {
+        releaseObject(s.object);
+        if (s.originalObjectClone) releaseObject(s.originalObjectClone);
+      });
         staged = [stagedModel];
         stagedModel.asset.communityId = a.id;
         stagedModel.asset.author = a.author;
@@ -633,7 +930,10 @@ export function setupStudio({ store, catalog, model, toast }) {
       controller.abort();
       clearTimeout(pollTimer);
       preview.clear();
-      staged.forEach((s) => releaseObject(s.object));
+      staged.forEach((s) => {
+        releaseObject(s.object);
+        if (s.originalObjectClone) releaseObject(s.originalObjectClone);
+      });
       preview.dispose();
       document.getElementById("asset-shelf").onclick = null;
       dialog.remove();

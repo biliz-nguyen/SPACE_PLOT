@@ -8,6 +8,7 @@ import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 import {CAD,MAX_BYTES,MAX_TRIANGLES,extension,inspectGLB,safeResource,unitMm} from './policy.js';
 import {getAsset} from './db.js';
 import {computeSha256,generateUUID} from './crypto.js';
+import {analyzeModelGeometry} from './optimizer.js';
 const cache=new Map();
 const material=()=>new THREE.MeshStandardMaterial({color:0xb1b6b9,roughness:.46,metalness:.25,side:THREE.DoubleSide});
 export function releaseObject(root){const geometries=new Set(),materials=new Set(),textures=new Set();root?.traverse(o=>{if(o.geometry)geometries.add(o.geometry);for(const m of (Array.isArray(o.material)?o.material:[o.material]).filter(Boolean)){materials.add(m);for(const v of Object.values(m))if(v?.isTexture)textures.add(v);}});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());}
@@ -76,8 +77,32 @@ export async function parseModel(file,files,{unit='mm',up='z',origin='imported',
   const hash=await computeSha256(glb);
   const id=generateUUID(),dimensionsMm=[size.x*1000,size.z*1000,size.y*1000].map(n=>+n.toFixed(3));
   const asset={id,name:file.name.replace(/\.[^.]+$/,''),sourceName:file.name,sourceFormat:ext,sourceUnit:actualUnit,sourceUp:actualUp,origin,dimensionsMm,triangles:Math.round(triangles),vertices,meshes,sha256:hash,bytes:glb.byteLength,blob:new Blob([glb],{type:'model/gltf-binary'}),original:file,createdAt:new Date().toISOString(),status:'local',mechanical:{},electrical:{}};
-  return {asset,object:wrapper,warnings:[...(triangles>150000?['Mesh nặng trên điện thoại. Nên giảm xuống dưới 150.000 tam giác.']:[]),...(origin==='ai'?['AI visual: kích thước được ước lượng; chưa có thông số CAD chính xác.']:[]),...(ext==='obj'&&!hadMtl?['OBJ không kèm MTL: dùng vật liệu trung tính.']:[])]};
+  const analysis=analyzeModelGeometry(wrapper,file,{unit:actualUnit,up:actualUp});
+  return {asset,object:wrapper,analysis,warnings:[...(triangles>150000?['Mesh nặng trên điện thoại. Nên giảm xuống dưới 150.000 tam giác.']:[]),...(origin==='ai'?['AI visual: kích thước được ước lượng; chưa có thông số CAD chính xác.']:[]),...(ext==='obj'&&!hadMtl?['OBJ không kèm MTL: dùng vật liệu trung tính.']:[])]};
  }catch(error){releaseObject(normalized||source);throw error;}finally{urls.forEach(u=>URL.revokeObjectURL(u));}
+}
+export async function rebuildAssetGLB(object,baseAsset){
+ const glb=await new GLTFExporter().parseAsync(object,{binary:true,onlyVisible:true,maxTextureSize:2048});
+ const hash=await computeSha256(glb);
+ let triangles=0,vertices=0,meshes=0;
+ object.traverse(o=>{
+  if(!o.isMesh)return;
+  meshes++;
+  const pos=o.geometry?.getAttribute('position');
+  if(pos){
+   vertices+=pos.count;
+   triangles+=Math.round((o.geometry.index?o.geometry.index.count:pos.count)/3);
+  }
+ });
+ return {
+  ...baseAsset,
+  triangles,
+  vertices,
+  meshes,
+  sha256:hash,
+  bytes:glb.byteLength,
+  blob:new Blob([glb],{type:'model/gltf-binary'})
+ };
 }
 export async function assetVisual(id){
  if(!cache.has(id))cache.set(id,(async()=>{const a=await getAsset(id);if(!a)throw Error('Thiếu GLB cục bộ. Import lại file hoặc tải từ cộng đồng.');return (await new GLTFLoader().parseAsync(await a.blob.arrayBuffer(),'')).scene;})().catch(e=>{cache.delete(id);throw e;}));
