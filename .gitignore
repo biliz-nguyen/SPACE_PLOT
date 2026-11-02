@@ -5,6 +5,12 @@ dist/
 
 .env*
 !.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+credentials*.json
+client_secret*.json
 public/cad/
 test-results/
 playwright-report/
