@@ -46,7 +46,7 @@ The assembly manifest supports text search and sorting by model, category or mas
 
 ## Supabase community vault
 
-Connected project: **FLYPLOT** (`ftwxqygbgvjohrtavdhv`). SQL migrations and the two Edge Functions are included under `supabase/`. New tables and the private `space-lot-models` bucket have already been created in this project. No sample user or model was left in the database.
+Connected project: Optional Supabase backend. SQL migrations and the two Edge Functions are included under `supabase/`. New tables and the private `space-lot-models` bucket can be created in your own Supabase project. No sample user or model was left in the database.
 
 - `community_assets`: metadata, immutable storage path, SHA-256, pending/approved/rejected state and reviewer audit fields.
 - `model_requests`: user requests for a missing part.
