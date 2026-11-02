@@ -80,7 +80,6 @@ export function InspectorPanel({
           <span className="eyebrow">ENGINEERING DESK</span>
           <h2>Inspector</h2>
         </div>
-        <SlidersHorizontal size={18} className="muted" />
       </div>
       <Tabs.Root value={tab} onValueChange={setTab} className="inspector-tabs">
         <Tabs.List aria-label="Inspector views" className="segmented">

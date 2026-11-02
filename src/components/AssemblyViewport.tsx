@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 import {
   Box,
   GitBranch,
@@ -15,15 +15,31 @@ import {
   Gauge,
   Clock3,
 } from "lucide-react";
-import { store, useProject, analyze, catalog, number } from "@/lib/project";
+import { store, useProject, analyze, catalog, number, type Vector3 } from "@/lib/project";
 import { DroneScene } from "../scene.js";
 import { Button } from "./ui/button";
+import {
+  PlacementReviewCard,
+  type StagingPart,
+} from "./PlacementReviewCard";
+
 export function AssemblyViewport({
   model,
+  staging,
+  onPositionChange,
+  onAcceptPlacement,
+  onCancelPlacement,
+  onStartStaging,
 }: {
   model: RefObject<DroneScene | null>;
+  staging?: StagingPart | null;
+  onPositionChange?: (newPos: Vector3) => void;
+  onAcceptPlacement?: () => void;
+  onCancelPlacement?: () => void;
+  onStartStaging?: (componentId: string, initialPosition?: Vector3) => void;
 }) {
   useProject();
+  const [isDragOver, setIsDragOver] = useState(false);
   const data = analyze(store.project, catalog);
   function mode(value: string) {
     store.mode = value;
@@ -105,12 +121,72 @@ export function AssemblyViewport({
           </button>
         </div>
       </div>
-      <div className="viewport-frame" id="viewport-frame">
+      <div
+        className={`viewport-frame ${isDragOver ? "drag-over" : ""}`}
+        id="viewport-frame"
+        onDragOver={(e) => {
+          if (
+            e.dataTransfer.types.includes("application/x-space-lot-part") ||
+            e.dataTransfer.types.includes("text/plain")
+          ) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            if (!isDragOver) setIsDragOver(true);
+          }
+        }}
+        onDragEnter={(e) => {
+          if (
+            e.dataTransfer.types.includes("application/x-space-lot-part") ||
+            e.dataTransfer.types.includes("text/plain")
+          ) {
+            e.preventDefault();
+            setIsDragOver(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setIsDragOver(false);
+        }}
+        onDrop={(e) => {
+          setIsDragOver(false);
+          const partId =
+            e.dataTransfer.getData("application/x-space-lot-part") ||
+            e.dataTransfer.getData("text/plain");
+          if (!partId) return;
+
+          const comp = catalog.find((c) => c.id === partId);
+          if (!comp) return;
+
+          e.preventDefault();
+          let dropPos: Vector3 = [0, 0, 0];
+          if (model.current) {
+            try {
+              const calculated = model.current.dropPosition(e.nativeEvent);
+              if (calculated && calculated.length === 3) {
+                const defaultHeight = store.getDefaultPosition(comp.id)[2] ?? 0;
+                dropPos = [calculated[0], calculated[1], defaultHeight];
+              }
+            } catch {
+              dropPos = store.getDefaultPosition(comp.id);
+            }
+          } else {
+            dropPos = store.getDefaultPosition(comp.id);
+          }
+
+          onStartStaging?.(comp.id, dropPos);
+        }}
+      >
         <div
           id="three-container"
           role="img"
           aria-label="Interactive 3D drone viewport"
         />
+        {isDragOver && (
+          <div className="viewport-drag-target-indicator" aria-hidden="true">
+            <Box size={32} className="drag-indicator-icon" />
+            <span>DROP COMPONENT TO PLACE & REVIEW</span>
+          </div>
+        )}
         <div className="overlay top-left">
           <span className="view-chip">
             <span className="status-led" />
@@ -194,6 +270,16 @@ export function AssemblyViewport({
             <span>Move</span>
           </button>
         </div>
+        {staging && onPositionChange && onAcceptPlacement && onCancelPlacement && (
+          <div className="overlay placement-review-overlay">
+            <PlacementReviewCard
+              staging={staging}
+              onPositionChange={onPositionChange}
+              onAccept={onAcceptPlacement}
+              onCancel={onCancelPlacement}
+            />
+          </div>
+        )}
         <div id="viewport-error" role="status" />
       </div>
       <div className="viewport-status">

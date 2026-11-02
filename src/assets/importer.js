@@ -7,6 +7,7 @@ import {MTLLoader} from 'three/addons/loaders/MTLLoader.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 import {CAD,MAX_BYTES,MAX_TRIANGLES,extension,inspectGLB,safeResource,unitMm} from './policy.js';
 import {getAsset} from './db.js';
+import {computeSha256,generateUUID} from './crypto.js';
 const cache=new Map();
 const material=()=>new THREE.MeshStandardMaterial({color:0xb1b6b9,roughness:.46,metalness:.25,side:THREE.DoubleSide});
 export function releaseObject(root){const geometries=new Set(),materials=new Set(),textures=new Set();root?.traverse(o=>{if(o.geometry)geometries.add(o.geometry);for(const m of (Array.isArray(o.material)?o.material:[o.material]).filter(Boolean)){materials.add(m);for(const v of Object.values(m))if(v?.isTexture)textures.add(v);}});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());}
@@ -72,8 +73,8 @@ export async function parseModel(file,files,{unit='mm',up='z',origin='imported',
   const center=new THREE.Vector3();bounds.getCenter(center);const wrapper=new THREE.Group();normalized.position.sub(center);wrapper.add(normalized);
   const glb=await new GLTFExporter().parseAsync(wrapper,{binary:true,onlyVisible:true,maxTextureSize:2048});
   if(glb.byteLength>MAX_BYTES)throw Error('GLB chuẩn hóa vượt 40 MiB.');
-  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',glb))).map(n=>n.toString(16).padStart(2,'0')).join('');
-  const id=crypto.randomUUID(),dimensionsMm=[size.x*1000,size.z*1000,size.y*1000].map(n=>+n.toFixed(3));
+  const hash=await computeSha256(glb);
+  const id=generateUUID(),dimensionsMm=[size.x*1000,size.z*1000,size.y*1000].map(n=>+n.toFixed(3));
   const asset={id,name:file.name.replace(/\.[^.]+$/,''),sourceName:file.name,sourceFormat:ext,sourceUnit:actualUnit,sourceUp:actualUp,origin,dimensionsMm,triangles:Math.round(triangles),vertices,meshes,sha256:hash,bytes:glb.byteLength,blob:new Blob([glb],{type:'model/gltf-binary'}),original:file,createdAt:new Date().toISOString(),status:'local',mechanical:{},electrical:{}};
   return {asset,object:wrapper,warnings:[...(triangles>150000?['Mesh nặng trên điện thoại. Nên giảm xuống dưới 150.000 tam giác.']:[]),...(origin==='ai'?['AI visual: kích thước được ước lượng; chưa có thông số CAD chính xác.']:[]),...(ext==='obj'&&!hadMtl?['OBJ không kèm MTL: dùng vật liệu trung tính.']:[])]};
  }catch(error){releaseObject(normalized||source);throw error;}finally{urls.forEach(u=>URL.revokeObjectURL(u));}

@@ -50,7 +50,8 @@ export interface ProjectStore {
   select: (id: string | null) => void;
   move: (id: string, position: Vector3) => void;
   remove: (id: string | null) => void;
-  add: (id: string) => Instance | null;
+  add: (id: string, initialPosition?: Vector3 | null) => Instance | null;
+  getDefaultPosition: (componentId: string) => Vector3;
   reset: () => void;
   import: (project: unknown) => void;
   addWire: (from: string, fromPort: string, to: string, toPort: string) => void;

@@ -24,6 +24,7 @@ import {
 import { PartsCatalog } from "@/components/PartsCatalog";
 import { AssemblyViewport } from "@/components/AssemblyViewport";
 import { InspectorPanel } from "@/components/InspectorPanel";
+import { LogoConstellation } from "@/components/LogoConstellation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,7 +39,9 @@ import {
   useProject,
   downloadJSON,
   type StudioTab,
+  type Vector3,
 } from "@/lib/project";
+import { type StagingPart } from "@/components/PlacementReviewCard";
 import { DroneScene } from "./scene.js";
 import { setupStudio } from "./assets/studio.js";
 import { setupManifest } from "./manifest.js";
@@ -65,6 +68,17 @@ export default function App() {
     }
   });
   const [isResizingLeft, setIsResizingLeft] = useState(false);
+
+  const [rightWidth, setRightWidth] = useState(() => {
+    if (typeof window === "undefined") return 300;
+    try {
+      const saved = localStorage.getItem("space_plot_inspector_width") || localStorage.getItem("space_lot_inspector_width");
+      return saved ? Math.max(240, Math.min(520, Number(saved))) : 300;
+    } catch {
+      return 300;
+    }
+  });
+  const [isResizingRight, setIsResizingRight] = useState(false);
 
   const handleLeftResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -107,6 +121,49 @@ export default function App() {
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
   };
+
+  const handleRightResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget;
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch {}
+    setIsResizingRight(true);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    const startX = e.clientX;
+    const startWidth = rightWidth;
+
+    const onPointerMove = (moveEv: PointerEvent) => {
+      // Pulling left increases inspector width; pushing right decreases it
+      const delta = startX - moveEv.clientX;
+      const nextWidth = Math.max(240, Math.min(520, Math.round(startWidth + delta)));
+      setRightWidth(nextWidth);
+    };
+
+    const onPointerUp = (upEv: PointerEvent) => {
+      try {
+        target.releasePointerCapture(upEv.pointerId);
+      } catch {}
+      setIsResizingRight(false);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.getSelection()?.removeAllRanges();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      try {
+        const delta = startX - upEv.clientX;
+        const finalWidth = Math.max(240, Math.min(520, Math.round(startWidth + delta)));
+        localStorage.setItem("space_plot_inspector_width", String(finalWidth));
+      } catch {}
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  };
   const isAutomated = typeof window !== "undefined" && Boolean(window.navigator.webdriver);
   const [taskbarOpen, setTaskbarOpen] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -123,6 +180,68 @@ export default function App() {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setMessage(""), 4000);
   }, []);
+
+  const [stagingPart, setStagingPart] = useState<StagingPart | null>(null);
+
+  const startStaging = useCallback((componentId: string, initialPosition?: Vector3) => {
+    const comp = catalog.find((c) => c.id === componentId);
+    if (!comp) return;
+    if (store.project.instances.length >= 80) {
+      notify("Scene đạt giới hạn 80 linh kiện.");
+      return;
+    }
+    const defaultPos = initialPosition ?? store.getDefaultPosition(componentId);
+    const staging: StagingPart = {
+      componentId,
+      position: defaultPos,
+      dropPosition: defaultPos,
+    };
+    setStagingPart(staging);
+    model.current?.setPreviewPart({
+      componentId,
+      positionMm: defaultPos,
+    });
+  }, [notify]);
+
+  const handleStagingPositionChange = useCallback((newPos: Vector3) => {
+    setStagingPart((prev) => {
+      if (!prev) return null;
+      return { ...prev, position: newPos };
+    });
+    model.current?.updatePreviewPosition(newPos);
+  }, []);
+
+  const handleAcceptPlacement = useCallback(() => {
+    if (!stagingPart) return;
+    const comp = catalog.find((c) => c.id === stagingPart.componentId);
+    const added = store.add(stagingPart.componentId, stagingPart.position);
+    if (added) {
+      store.select(added.id);
+      notify(
+        `Đã thêm ${comp?.name || "linh kiện"} tại [${stagingPart.position.join(", ")}] mm.`,
+      );
+    } else {
+      notify("Scene đạt giới hạn 80 linh kiện.");
+    }
+    setStagingPart(null);
+    model.current?.setPreviewPart(null);
+  }, [stagingPart, notify]);
+
+  const handleCancelPlacement = useCallback(() => {
+    setStagingPart(null);
+    model.current?.setPreviewPart(null);
+    notify("Đã hủy đặt linh kiện.");
+  }, [notify]);
+
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && stagingPart) {
+        handleCancelPlacement();
+      }
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [stagingPart, handleCancelPlacement]);
   useEffect(() => {
     const container = document.getElementById("three-container")!;
     let scene: DroneScene | null = null;
@@ -245,15 +364,13 @@ export default function App() {
             <a className="brand cyber-skew" href="/" aria-label="SPACE_PLOT home">
               <div className="unskew-content brand-inner">
                 <div className="brand-logo-frame">
+                  <LogoConstellation />
                   <img src="/logo.png" alt="" />
                 </div>
                 <div className="brand-text">
                   <span className="brand-name">SPACE_PLOT</span>
                   <span className="brand-sub">SYS // 3D AERO</span>
                 </div>
-              </div>
-              <div className="cosmic-meteor-track" aria-hidden="true">
-                <div className="cosmic-meteor-star" />
               </div>
             </a>
             <div className="project-inline-identity cyber-skew">
@@ -544,13 +661,14 @@ export default function App() {
           </Button>
         </div>
         <div
-          className={`premium-workspace ${panel ? `show-${panel}` : ""} ${collapseLeft ? "collapse-left" : ""} ${collapseRight ? "collapse-right" : ""} ${isResizingLeft ? "resizing" : ""}`}
+          className={`premium-workspace ${panel ? `show-${panel}` : ""} ${collapseLeft ? "collapse-left" : ""} ${collapseRight ? "collapse-right" : ""} ${isResizingLeft || isResizingRight ? "resizing" : ""}`}
           style={
             {
               gridTemplateColumns: collapseLeft
-                ? (collapseRight ? "0px minmax(0, 1fr) 0px" : "0px minmax(0, 1fr) 280px")
-                : (collapseRight ? `${leftWidth}px minmax(0, 1fr) 0px` : `${leftWidth}px minmax(0, 1fr) 280px`),
+                ? (collapseRight ? "0px minmax(0, 1fr) 0px" : `0px minmax(0, 1fr) ${rightWidth}px`)
+                : (collapseRight ? `${leftWidth}px minmax(0, 1fr) 0px` : `${leftWidth}px minmax(0, 1fr) ${rightWidth}px`),
               "--left-panel-width": `${leftWidth}px`,
+              "--right-panel-width": `${rightWidth}px`,
             } as React.CSSProperties
           }
         >
@@ -570,7 +688,7 @@ export default function App() {
             >
               <PanelLeftClose size={15} />
             </button>
-            <PartsCatalog notify={notify} />
+            <PartsCatalog notify={notify} onStartStaging={startStaging} />
             {!collapseLeft && (
               <div
                 className={`panel-resize-handle left ${isResizingLeft ? "active" : ""}`}
@@ -603,9 +721,26 @@ export default function App() {
                 <span>Inspector</span>
               </button>
             )}
-            <AssemblyViewport model={model} />
+            <AssemblyViewport
+              model={model}
+              staging={stagingPart}
+              onPositionChange={handleStagingPositionChange}
+              onAcceptPlacement={handleAcceptPlacement}
+              onCancelPlacement={handleCancelPlacement}
+              onStartStaging={startStaging}
+            />
           </main>
           <aside id="inspector-panel" className="inspector-panel">
+            {!collapseRight && (
+              <div
+                className={`panel-resize-handle right ${isResizingRight ? "active" : ""}`}
+                onPointerDown={handleRightResizeStart}
+                title="Kéo để chỉnh độ rộng inspector"
+                aria-label="Resize inspector panel"
+                role="separator"
+                aria-orientation="vertical"
+              />
+            )}
             <button
               className="mobile-close"
               aria-label="Đóng inspector"

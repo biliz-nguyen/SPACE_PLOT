@@ -19,6 +19,8 @@ test("catalog keyboard search, add, inspector position and persistence", async (
   await page.locator("#catalog-search").fill("battery");
   await expect(page.locator("[data-add]")).toHaveCount(1);
   await page.locator("[data-add]").click();
+  await expect(page.locator("#placement-review-card")).toBeVisible();
+  await page.locator("#accept-placement-btn").click();
   await expect(page.locator("#instance-count")).toHaveText("19 PARTS");
   await expect(page.locator("#selected-content")).toContainText("LiPo");
   await page.locator('[data-pos="0"]').fill("37");
@@ -229,6 +231,7 @@ test("canvas selection and Move tool change XY while preserving height", async (
   await page.locator("#camera-home").click();
   await page.locator('[data-tool="move"]').click();
   const before = await project(page);
+  console.log("MOTOR-1:", before.instances.find((i) => i.id === "motor-1"));
   const point = await page.evaluate(async () => {
     const THREE = await import("/node_modules/three/build/three.module.js");
     const { store } = await import("/src/store.js"),
@@ -272,4 +275,98 @@ test("canvas selection and Move tool change XY while preserving height", async (
   await expect(page.locator("#selected-content")).not.toContainText(
     "Select a component",
   );
+});
+
+test("drag and drop catalog part into 3D view, review coordinates, and accept", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator("#instance-count")).toHaveText("18 PARTS");
+
+  // Filter or search to reveal part
+  await page.locator("#catalog-search").fill("gps");
+  const partCard = page.locator('.part-card[data-add="gps-uart"]');
+  await expect(partCard).toBeVisible();
+
+  // Drag part from catalog onto 3D viewport
+  const viewport = page.locator("#three-container");
+  await partCard.dragTo(viewport);
+
+  // Review card should be visible
+  await expect(page.locator("#placement-review-card")).toBeVisible();
+  await expect(page.locator("#placement-review-card")).toContainText("UART GPS");
+
+  // User enters custom coordinate values
+  await page.locator("#review-pos-x").fill("120");
+  await page.locator("#review-pos-y").fill("-65");
+  await page.locator("#review-pos-z").fill("45");
+
+  // Accept placement
+  await page.locator("#accept-placement-btn").click();
+  await expect(page.locator("#placement-review-card")).not.toBeVisible();
+
+  // Part should be added with the exact reviewed coordinates
+  await expect(page.locator("#instance-count")).toHaveText("19 PARTS");
+  const p = await project(page);
+  const lastInstance = p.instances.at(-1);
+  expect(lastInstance.componentId).toBe("gps-uart");
+  expect(lastInstance.positionMm).toEqual([120, -65, 45]);
+});
+
+test("review placement cancel discards the preview without modifying assembly", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator("#instance-count")).toHaveText("18 PARTS");
+
+  // Filter to reveal receiver
+  await page.locator("#catalog-search").fill("receiver");
+  const partCard = page.locator('.part-card[data-add="rx-uart"]');
+  await expect(partCard).toBeVisible();
+  await partCard.click();
+
+  await expect(page.locator("#placement-review-card")).toBeVisible();
+  await expect(page.locator("#placement-review-card")).toContainText("Serial Receiver");
+
+  // Cancel placement
+  await page.locator("#cancel-placement-btn").click();
+  await expect(page.locator("#placement-review-card")).not.toBeVisible();
+
+  // Instance count remains unchanged
+  await expect(page.locator("#instance-count")).toHaveText("18 PARTS");
+});
+
+test("review placement panel can be dragged freely across the screen", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator("#catalog-search").fill("gps");
+  const partCard = page.locator('.part-card[data-add="gps-uart"]');
+  await partCard.click();
+
+  const reviewCard = page.locator("#placement-review-card");
+  await expect(reviewCard).toBeVisible();
+
+  const initialBox = await reviewCard.boundingBox();
+  expect(initialBox).toBeTruthy();
+
+  // Drag the review card by its drag handle bar
+  const dragBar = page.locator(".review-drag-handle-bar");
+  const dragBox = await dragBar.boundingBox();
+  expect(dragBox).toBeTruthy();
+
+  await page.mouse.move(dragBox.x + dragBox.width / 2, dragBox.y + dragBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dragBox.x - 120, dragBox.y - 180, { steps: 10 });
+  await page.mouse.up();
+
+  const newBox = await reviewCard.boundingBox();
+  expect(newBox.x).toBeLessThan(initialBox.x);
+  expect(newBox.y).toBeLessThan(initialBox.y);
+
+  // Test collapse and expand toggle
+  await page.locator(".review-icon-btn").click();
+  await expect(page.locator(".review-coords-section")).not.toBeVisible();
+  await page.locator(".review-icon-btn").click();
+  await expect(page.locator(".review-coords-section")).toBeVisible();
 });

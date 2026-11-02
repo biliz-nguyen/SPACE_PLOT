@@ -1,6 +1,7 @@
 import { validateFiles, CAD, extension, validateMetadata } from "./policy.js";
 import { parseModel, releaseObject } from "./importer.js";
 import { allAssets, saveAsset, getAsset } from "./db.js";
+import { generateUUID } from "./crypto.js";
 import { AssetPreview } from "./preview.js";
 import {
   cloud,
@@ -570,7 +571,7 @@ export function setupStudio({ store, catalog, model, toast }) {
       const size = Number($("#ai-size").value);
       if (!Number.isFinite(size) || size <= 0 || size > 10000)
         throw Error("Nhập kích thước đích hợp lệ.");
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       job = { id, size };
       localStorage.setItem("space-lot-last-job", JSON.stringify(job));
       $("#ai-resume").hidden = false;

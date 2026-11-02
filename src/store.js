@@ -45,7 +45,7 @@ export const store = {
     p.positionMm=pos;this.changed();
   },
   remove(id){if(!id)return;this.project.instances=this.project.instances.filter(x=>x.id!==id);this.project.connections=this.project.connections.filter(x=>x.from!==id&&x.to!==id);this.selectedId=null;this.changed();},
-  add(componentId){
+  add(componentId, initialPosition = null){
     const component=catalog.find(c=>c.id===componentId);
     if(!component || this.project.instances.length>=80)return null;
     const existing=this.project.instances.filter(i=>i.componentId===componentId);
@@ -62,8 +62,28 @@ export const store = {
     }
     if(component.category==='fc')position=[0,0,23];
     if(component.category==='battery')position=[-10,0,51];
+    if (initialPosition && Array.isArray(initialPosition) && initialPosition.length === 3) {
+      position = initialPosition.map(x => Math.max(-5000, Math.min(5000, Math.round(Number(x) || 0))));
+    }
     const instance={id,componentId,positionMm:position};
     this.project.instances.push(instance);this.selectedId=id;this.changed();return instance;
+  },
+  getDefaultPosition(componentId){
+    const component=catalog.find(c=>c.id===componentId);
+    if(!component) return [0, 0, 0];
+    let position=[0,0,80];
+    const frame=this.project.instances.find(i=>instanceComponent(catalog,i)?.category==='frame');
+    const frameModel=frame && instanceComponent(catalog,frame);
+    if(['motor','prop','esc'].includes(component.category) && frameModel?.anchors?.motors){
+      const peers=this.project.instances.filter(i=>instanceComponent(catalog,i)?.category===component.category);
+      const anchor=frameModel.anchors.motors[Math.min(peers.length,3)];
+      if(anchor){
+        position=component.category==='esc'?[Math.round(anchor[0]*0.56),Math.round(anchor[1]*0.56),7]:[anchor[0],anchor[1],component.category==='motor'?24:45];
+      }
+    }
+    if(component.category==='fc')position=[0,0,23];
+    if(component.category==='battery')position=[-10,0,51];
+    return position;
   },
   reset(){this.project=defaultProject();this.selectedId='fc-1';this.explode=0;this.mode='assembly';this.tool='select';this.changed();},
   import(project){this.project=validateProjectShape(project,catalog);this.selectedId=null;this.explode=0;this.changed();},

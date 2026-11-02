@@ -268,6 +268,10 @@ export class DroneScene {
     this.scene.add(this.wiresGroup);
     this.discsGroup = new THREE.Group();
     this.scene.add(this.discsGroup);
+    this.previewGroup = new THREE.Group();
+    this.scene.add(this.previewGroup);
+    this.previewPart = null;
+    this.previewLabel = null;
     this.items = new Map();
     this.labels = new Map();
     this.sign = "";
@@ -312,9 +316,90 @@ export class DroneScene {
       });
       node.shadow?.map?.dispose();
     });
+    if (this.previewLabel) {
+      this.previewLabel.remove();
+      this.previewLabel = null;
+    }
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labelLayer.remove();
+  }
+  setPreviewPart(preview) {
+    this.previewPart = preview;
+    for (const obj of [...this.previewGroup.children]) {
+      this.previewGroup.remove(obj);
+      disposeGroup(obj);
+    }
+    if (!preview) {
+      if (this.previewLabel) {
+        this.previewLabel.remove();
+        this.previewLabel = null;
+      }
+      return;
+    }
+    const comp =
+      this.catalog?.find((c) => c.id === preview.componentId) || null;
+    if (!comp) return;
+
+    const g = makePart(comp);
+    g.traverse((node) => {
+      if (node.isMesh && node.material) {
+        node.material = node.material.clone();
+        node.material.transparent = true;
+        node.material.opacity = 0.88;
+        if (node.material.emissive) {
+          node.material.emissive.setHex(0x00ffaa);
+          node.material.emissiveIntensity = 0.45;
+        }
+      }
+    });
+
+    const box = new THREE.BoxHelper(g, 0x00ff88);
+    box.material.transparent = true;
+    box.material.opacity = 0.75;
+    g.add(box);
+
+    const groundRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.12, 0.15, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x00ffaa,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.75,
+      }),
+    );
+    groundRing.name = "previewGroundRing";
+    groundRing.rotation.x = -Math.PI / 2;
+    groundRing.position.y = -(preview.positionMm[2] * U) - 0.36;
+    g.add(groundRing);
+
+    g.position.copy(mmToWorld(preview.positionMm));
+    this.previewGroup.add(g);
+
+    if (!this.previewLabel) {
+      this.previewLabel = document.createElement("div");
+      this.previewLabel.className = "part-label staging-label selected";
+      this.labelLayer.appendChild(this.previewLabel);
+    }
+    this.previewLabel.textContent = `REVIEW: ${comp.name} [${preview.positionMm.join(", ")}]`;
+    this.previewLabel.style.display = "block";
+  }
+  updatePreviewPosition(pos) {
+    if (!this.previewPart) return;
+    this.previewPart.positionMm = pos;
+    const g = this.previewGroup.children[0];
+    if (g) {
+      g.position.copy(mmToWorld(pos));
+      const ring = g.getObjectByName("previewGroundRing");
+      if (ring) {
+        ring.position.y = -(pos[2] * U) - 0.36;
+      }
+    }
+    if (this.previewLabel) {
+      const comp =
+        this.catalog?.find((c) => c.id === this.previewPart.componentId) || null;
+      this.previewLabel.textContent = `REVIEW: ${comp?.name || "Part"} [${pos.join(", ")}]`;
+    }
   }
   dropPosition(event) {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -651,6 +736,22 @@ export class DroneScene {
       }
       label.style.visibility = "visible";
       label.style.transform = `translate(-50%,-50%) translate(${Math.round(((v.x + 1) * rect.width) / 2)}px,${Math.round(((-v.y + 1) * rect.height) / 2)}px)`;
+    }
+    if (
+      this.previewLabel &&
+      this.previewLabel.style.display !== "none" &&
+      this.previewGroup.children[0]
+    ) {
+      const g = this.previewGroup.children[0];
+      const v = g.position.clone();
+      v.y += 0.27;
+      v.project(this.camera);
+      if (v.z > 1 || Math.abs(v.x) > 1.08 || Math.abs(v.y) > 1.08) {
+        this.previewLabel.style.visibility = "hidden";
+      } else {
+        this.previewLabel.style.visibility = "visible";
+        this.previewLabel.style.transform = `translate(-50%,-50%) translate(${Math.round(((v.x + 1) * rect.width) / 2)}px,${Math.round(((-v.y + 1) * rect.height) / 2)}px)`;
+      }
     }
   }
 }

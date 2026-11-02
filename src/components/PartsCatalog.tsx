@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import * as Accordion from "@radix-ui/react-accordion";
 import {
   Search,
-  Plus,
+  GripVertical,
   ChevronDown,
   ChevronsUpDown,
   Box,
@@ -22,8 +22,10 @@ import { catalog, store, useProject, number, type Part } from "@/lib/project";
 import { Button } from "./ui/button";
 export function PartsCatalog({
   notify,
+  onStartStaging,
 }: {
   notify: (message: string) => void;
+  onStartStaging?: (componentId: string, initialPosition?: [number, number, number]) => void;
 }) {
   useProject();
   const [search, setSearch] = useState(""),
@@ -279,7 +281,48 @@ export function PartsCatalog({
                         </Accordion.Header>
                         <Accordion.Content className="catalog-content">
                           {items.map((part) => (
-                            <div className="part-card part-row" key={part.id}>
+                            <div
+                              className="part-card part-row draggable-part"
+                              key={part.id}
+                              draggable="true"
+                              data-add={part.id}
+                              role="button"
+                              tabIndex={0}
+                              title={`Kéo ${part.name} vào 3D workspace hoặc click để xem lại tọa độ`}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData(
+                                  "application/x-space-lot-part",
+                                  part.id,
+                                );
+                                e.dataTransfer.setData("text/plain", part.id);
+                                e.dataTransfer.effectAllowed = "copy";
+                              }}
+                              onClick={() => {
+                                if (onStartStaging) {
+                                  onStartStaging(part.id, [0, 0, 0]);
+                                } else {
+                                  notify(
+                                    store.add(part.id)
+                                      ? `Đã thêm ${part.name}`
+                                      : "Scene đạt giới hạn 80 linh kiện.",
+                                  );
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  if (onStartStaging) {
+                                    onStartStaging(part.id, [0, 0, 0]);
+                                  } else {
+                                    notify(
+                                      store.add(part.id)
+                                        ? `Đã thêm ${part.name}`
+                                        : "Scene đạt giới hạn 80 linh kiện.",
+                                    );
+                                  }
+                                }
+                              }}
+                            >
                               <div className="part-card-main">
                                 <div className="part-card-name">
                                   {CATEGORY_IMAGE_MAP[part.category] ? (
@@ -301,21 +344,13 @@ export function PartsCatalog({
                                     ? "Unknown"
                                     : `${number(part.massG, 0)} g`}
                                 </span>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  data-add={part.id}
-                                  aria-label={`Thêm ${part.name}`}
-                                  onClick={() =>
-                                    notify(
-                                      store.add(part.id)
-                                        ? `Đã thêm ${part.name}`
-                                        : "Scene đạt giới hạn 80 linh kiện.",
-                                    )
-                                  }
+                                <span
+                                  className="drag-indicator"
+                                  title="Kéo thả vào mô hình 3D"
+                                  aria-hidden="true"
                                 >
-                                  <Plus size={14} />
-                                </Button>
+                                  <GripVertical size={14} />
+                                </span>
                               </div>
                             </div>
                           ))}
